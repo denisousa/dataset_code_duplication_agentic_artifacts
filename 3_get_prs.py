@@ -58,8 +58,8 @@ def _load_token_pool() -> TokenPool:
 
 _token_pool: TokenPool = _load_token_pool()
 
-RESULTS_DIR      = Path("4_prs_results")
-REPORT_PATH      = Path("1_context_results/clone_terms_report.json")
+RESULTS_DIR      = Path("3_prs_results")
+REPORT_PATH      = Path("1_configurations_artifacts_results/clone_terms_report.json")
 CHECKPOINT_PATH  = RESULTS_DIR / "search_prs_checkpoint.json"
 OUTPUT_PATH      = RESULTS_DIR / "search_prs_results.json"
 
@@ -119,7 +119,7 @@ def print_repo_summary(repo_full: str, results: List[Dict[str, Any]]) -> None:
                 print(f"     Terms matched         : {terms}")
                 print(f"     Comments with term    : {n_comments}")
                 print(f"     Commenter types       : {ct}")
-                print(f"     Matches:")
+                print("     Matches:")
                 for m in result["matches"]:
                     author_tag = f" @{m['author']} [{m['author_type']}]" if m["author"] else ""
                     print(f"       [{m['location']}{author_tag}] '{m['term']}' → {m['excerpt']}")

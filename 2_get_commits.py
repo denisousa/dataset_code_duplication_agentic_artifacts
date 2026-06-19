@@ -32,7 +32,7 @@ AI_CONFIG_DIR  = Path("ai_config")
 REPOS_CSV      = Path("ai_config/repos.csv")
 COMMITS_CSV    = AI_CONFIG_DIR / "commits.csv"
 
-RESULTS_DIR    = Path("3_commits_results")
+RESULTS_DIR    = Path("2_commits_results")
 REPORT_PATH    = RESULTS_DIR / "commits_clone_terms_report.json"
 ANALYSIS_PATH  = RESULTS_DIR / "commits_clone_terms_analysis.json"
 

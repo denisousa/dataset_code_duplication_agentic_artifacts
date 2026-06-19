@@ -9,12 +9,11 @@ genealogy_results/
 .vscode/
 .claude
 context_skill_heading_results/
-1_context_results/
+1_configurations_artifacts_results/
+2_commits_results/
+3_prs_results/
+4_analyze_results/
 2_context_github_results/
-3_commits_results/
-4_prs_results/
-5_analyze_results/
-6_issues_results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

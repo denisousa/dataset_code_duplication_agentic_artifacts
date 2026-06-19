@@ -51,7 +51,7 @@ CSV_SOURCES: dict[str, str] = {
     "subagents.csv":     "subagent",
 }
 
-RESULTS_DIR   = Path("1_context_results")
+RESULTS_DIR   = Path("1_configurations_artifacts_results")
 REPORT_PATH   = RESULTS_DIR / "clone_terms_report.json"
 ANALYSIS_PATH = RESULTS_DIR / "clone_terms_analysis.json"
 FAILED_PATH   = RESULTS_DIR / "clone_terms_failed.json"
@@ -371,7 +371,7 @@ def process_csv(csv_name: str, file_col: str, headers: dict, engineered_repos: s
             print(f"  [{completed}/{n_records}] {record.repo_name} / {record.file_path}")
 
             if content is None:
-                print(f"    → Could not fetch content.")
+                print("    → Could not fetch content.")
                 failed.append(FailedRecord(
                     csv=csv_name,
                     repo_name=record.repo_name,

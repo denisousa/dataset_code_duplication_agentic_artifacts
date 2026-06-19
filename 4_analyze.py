@@ -9,13 +9,13 @@ from typing import Any
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = ROOT_DIR / "5_analyze_results"
+OUTPUT_DIR = ROOT_DIR / "4_analyze_results"
 
-MD_ANALYSIS_PATH = ROOT_DIR / "1_context_results" / "clone_terms_analysis.json"
-MD_REPORT_PATH = ROOT_DIR / "1_context_results" / "clone_terms_report.json"
-COMMITS_ANALYSIS_PATH = ROOT_DIR / "3_commits_results" / "commits_clone_terms_analysis.json"
-COMMITS_REPORT_PATH = ROOT_DIR / "3_commits_results" / "commits_clone_terms_report.json"
-PRS_RESULTS_PATH = ROOT_DIR / "4_prs_results" / "search_prs_results.json"
+MD_ANALYSIS_PATH = ROOT_DIR / "1_configurations_artifacts_results" / "clone_terms_analysis.json"
+MD_REPORT_PATH = ROOT_DIR / "1_configurations_artifacts_results" / "clone_terms_report.json"
+COMMITS_ANALYSIS_PATH = ROOT_DIR / "2_commits_results" / "commits_clone_terms_analysis.json"
+COMMITS_REPORT_PATH = ROOT_DIR / "2_commits_results" / "commits_clone_terms_report.json"
+PRS_RESULTS_PATH = ROOT_DIR / "3_prs_results" / "search_prs_results.json"
 TARGET_AGENTS = ["Claude", "Gemini", "Cursor", "Copilot", "Codex", "Others"]
 
 
