@@ -1,0 +1,16 @@
+É possível que existam falsos positivos para os exclusivo
+# Code Duplication - Pode representar um comentário de código
+
+## Duplicate Code Clusters
+
+### Cluster 1: {pattern_name} ({instance_count} instances)
+- `{file1}:{lines}`
+- `{file2}:{lines}`
+- `{file3}:{lines}`
+
+**Pattern**: {description}
+**Recommendation**: Extract to `{suggested_location}`
+**Effort**: {low|medium|high}
+
+-- isso aqui também representa um falso positivos
+
