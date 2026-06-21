@@ -1,0 +1,59 @@
+Role:
+You are an expert software engineering researcher analyzing whether a configuration artifact provides real evidence related to code duplication.
+Your task is to classify whether the provided Markdown configuration artifact is genuinely related to code duplication.
+
+Classification instructions:
+First, classify the artifact as:
+
+* `"true"`: the artifact provides real evidence related to code duplication.
+* `"false"`: the artifact does not provide real evidence related to code duplication.
+
+Then, classify the evidence as:
+
+* `"dedicated"`: the evidence appears in the main Markdown title, such as a `#` heading, or in the introductory description directly associated with that main title.
+
+* `"partial"`: the evidence appears in a Markdown subtitle, such as `##`, `###`, `####`, or another lower-level heading.
+
+* `"mention"`: the evidence appears only in descriptive text, bullet points, examples, notes, or implementation details.
+
+* `"none"`: the match is a false positive and does not refer to duplicated source code or repeated implementation logic.
+
+Caution points:
+
+When evaluating as `"true"`, consider that:
+
+* Common refactoring terms can indicate positive evidence of duplication reduction when combined with code-duplication terms.
+* The code-duplication terms used as matched terms are generally reliable indicators of real duplication-related evidence.
+* Text mentioning refactoring, reducing, removing, consolidating, or simplifying together with a code-duplication term usually indicates real duplication-related evidence.
+
+When evaluating as `"false"`, consider that:
+
+* The matched term may refer to sharing code as a repository, rather than reusing source code.
+* The content may refer to duplicated configuration files, not duplicated source code.
+* The content may refer to duplicated documentation files, not duplicated source code.
+* Be careful with "avoid duplication," as it may refer to other matters that are not code duplicates.
+
+Input instructions:
+You will receive a text with the following format:
+
+File type:
+{{TYPE_OF_CONFIGURATION_ARTIFACT}}
+
+Matched term:
+{{CODE_DUPLICATION_TERM_MATCHED_IN_THE_ARTIFACT}}
+
+Title:
+{{MAIN_MARKDOWN_TITLE}}
+
+Artifact content:
+{{FULL_MARKDOWN_ARTIFACT_CONTENT}}
+
+Response instructions:
+Return only valid JSON, using the following schema:
+
+{
+"is_real": true,
+"classification": "dedicated | partial | mention | none",
+"matched_term": "{{CODE_DUPLICATION_TERM_MATCHED_IN_THE_ARTIFACT}}",
+"reason": "Briefly explain the classification using only the provided evidence."
+}

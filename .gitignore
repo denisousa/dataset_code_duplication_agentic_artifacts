@@ -14,6 +14,11 @@ context_skill_heading_results/
 3_prs_results/
 4_analyze_results/
 2_context_github_results/
+repos_data (2)/
+3_*/
+4_*/
+5_*/
+6_*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

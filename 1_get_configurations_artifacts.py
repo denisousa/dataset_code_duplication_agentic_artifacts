@@ -1,6 +1,6 @@
 """
 Analyze all AI_CONFIG CSV files (commands, context_files, mcp, skills, subagents)
-to identify .md files that mention code-clone / code-duplication related terms.
+to identify .md files that contain code-clone / code-duplication related terms.
 
 Workflow:
   1. For each configured CSV source, load the file and filter rows whose file
@@ -38,6 +38,7 @@ load_dotenv()
 
 AI_CONFIG_DIR = Path("ai_config")
 REPOS_CSV = Path("ai_config/repos.csv")
+LOCAL_REPOS_DIR = AI_CONFIG_DIR / "repos_data" / "repos"
 
 # Maps each CSV filename to the column that holds the file path.
 CSV_SOURCES: dict[str, str] = {
@@ -77,7 +78,7 @@ CLONE_TERMS: list[str] = [
 CLEAN_TERMS: list[str] = CLONE_TERMS
 
 MAX_WORKERS = 20            # concurrent HTTP fetch threads
-SNIPPET_CONTEXT = 80        # characters of context around each match
+SNIPPET_CONTEXT = 100       # characters of context before and after each match
 DELAY_BETWEEN_REQUESTS = 0  # no artificial delay; parallelism + auto rate-limit handles pacing
 
 
@@ -111,7 +112,6 @@ class MatchResult(NamedTuple):
     hits: list[TermHit]
     total_matches: int
     raw_url: str
-    classification: str  # "dedicated" | "partial" | "mention"
 
 
 class FailedRecord(NamedTuple):
@@ -259,6 +259,28 @@ def fetch_raw_content(raw_url: str, headers: dict) -> str | None:
         return None  # 404 or other non-retryable error
 
 
+def build_local_repo_path(repo_name: str) -> Path:
+    return LOCAL_REPOS_DIR / repo_name.replace("/", "§")
+
+
+def read_text_with_fallbacks(path: Path) -> str:
+    raw_bytes = path.read_bytes()
+    for encoding in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return raw_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw_bytes.decode("utf-8", errors="replace")
+
+
+def read_local_content(record: FileRecord) -> str | None:
+    local_path = build_local_repo_path(record.repo_name) / record.file_path
+    try:
+        return read_text_with_fallbacks(local_path)
+    except OSError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Step 5 – Apply regex and extract statistics
 # ---------------------------------------------------------------------------
@@ -290,30 +312,6 @@ def apply_regex(text: str) -> list[TermHit]:
     return hits
 
 
-_H1_RE  = re.compile(r"^#\s+.+$",     re.MULTILINE)  # main title only
-_SUB_RE = re.compile(r"^#{2,6}\s+.+$", re.MULTILINE)  # subheadings (## and deeper)
-
-
-def classify_file(text: str, hits: list[TermHit]) -> str:
-    """
-    Classify a file based on where matched terms appear:
-      - "dedicated"  : a term appears in the main heading (# ...)
-      - "partial"    : a term appears in a subheading (## ... or deeper)
-      - "mention" : a term only appears in bullet points or running text
-    """
-    h1_text  = " ".join(_H1_RE.findall(text))
-    sub_text = " ".join(_SUB_RE.findall(text))
-    for hit in hits:
-        pattern = re.compile(re.escape(hit.term), re.IGNORECASE)
-        if pattern.search(h1_text):
-            return "dedicated"
-    for hit in hits:
-        pattern = re.compile(re.escape(hit.term), re.IGNORECASE)
-        if pattern.search(sub_text):
-            return "partial"
-    return "mention"
-
-
 # ---------------------------------------------------------------------------
 # Step 6 – Process a single CSV source
 # ---------------------------------------------------------------------------
@@ -322,11 +320,11 @@ def _fetch_one(
     record: FileRecord,
     headers: dict,
 ) -> tuple[FileRecord, str, str | None]:
-    """Fetch raw content for one record. Returns (record, raw_url, content)."""
+    """Read one record from the local mirror, falling back to raw_url when needed."""
     raw_url = github_link_to_raw_url(record.github_link, record.commit_sha)
-    if not raw_url:
-        return record, "", None
-    content = fetch_raw_content(raw_url, headers)
+    content = read_local_content(record)
+    if content is None and raw_url:
+        content = fetch_raw_content(raw_url, headers)
     return record, raw_url, content
 
 
@@ -384,9 +382,8 @@ def process_csv(csv_name: str, file_col: str, headers: dict, engineered_repos: s
             hits = apply_regex(content)
             if hits:
                 n_hits = sum(h.count for h in hits)
-                classification = classify_file(content, hits)
-                results.append(MatchResult(record=record, hits=hits, total_matches=n_hits, raw_url=raw_url, classification=classification))
-                print(f"    → {len(hits)} term(s) matched, {n_hits} total occurrence(s). [{classification}]")  # dedicated | partial | mention
+                results.append(MatchResult(record=record, hits=hits, total_matches=n_hits, raw_url=raw_url))
+                print(f"    → {len(hits)} term(s) matched, {n_hits} total occurrence(s).")
 
     return {
         "csv": csv_name,
@@ -402,16 +399,13 @@ def process_csv(csv_name: str, file_col: str, headers: dict, engineered_repos: s
 # ---------------------------------------------------------------------------
 
 def aggregate_stats(results: list[MatchResult]) -> dict:
-    """Return term-file-count mapping, classification counts, and total matched files."""
+    """Return term-file-count mapping and total matched files."""
     term_file_counts: dict[str, int] = {t: 0 for t in CLEAN_TERMS}
-    classification_counts: dict[str, int] = {"dedicated": 0, "partial": 0, "mention": 0}
     for result in results:
         for hit in result.hits:
             term_file_counts[hit.term] += 1
-        classification_counts[result.classification] = classification_counts.get(result.classification, 0) + 1
     return {
         "total_md_files_with_match": len(results),
-        "classification_counts": classification_counts,
         "term_file_counts": term_file_counts,
         "top_terms": sorted(
             [{"term": t, "files": c} for t, c in term_file_counts.items() if c > 0],
@@ -450,7 +444,6 @@ def save_report(csv_data: list[dict], report_path: Path) -> None:
                         "first_commit_sha": r.record.first_commit_sha,
                         "last_commit_sha": r.record.commit_sha,
                         "total_occurrences": r.total_matches,
-                        "classification": r.classification,
                         "terms": [
                             {
                                 "term": hit.term,
@@ -476,7 +469,7 @@ def save_report(csv_data: list[dict], report_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def save_failed_report(csv_data: list[dict], failed_path: Path) -> None:
-    """Write all entries that could not be fetched to a dedicated JSON file."""
+    """Write all entries that could not be fetched to a separate JSON file."""
     all_failed: list[dict] = []
     for entry in csv_data:
         for f in entry.get("failed", []):
@@ -508,7 +501,6 @@ def save_analysis(csv_data: list[dict], analysis_path: Path) -> None:
     - global: totals and overall term ranking
     """
     global_term_counts: dict[str, int] = {t: 0 for t in CLEAN_TERMS}
-    global_classification_counts: dict[str, int] = {"dedicated": 0, "partial": 0, "mention": 0}
     global_total_records = 0
     global_total_md = 0
     global_total_matched = 0
@@ -522,15 +514,12 @@ def save_analysis(csv_data: list[dict], analysis_path: Path) -> None:
 
         for term, count in stats["term_file_counts"].items():
             global_term_counts[term] += count
-        for cls, count in stats["classification_counts"].items():
-            global_classification_counts[cls] += count
 
         per_csv.append({
             "csv": entry["csv"],
             "total_records_in_csv": entry["total_records"],
             "total_md_files": entry["total_md_records"],
             "md_files_with_match": stats["total_md_files_with_match"],
-            "classification_counts": stats["classification_counts"],
             "top_terms": stats["top_terms"],
         })
 
@@ -546,7 +535,6 @@ def save_analysis(csv_data: list[dict], analysis_path: Path) -> None:
             "total_records_across_all_csvs": global_total_records,
             "total_md_files_across_all_csvs": global_total_md,
             "total_md_files_with_match": global_total_matched,
-            "classification_counts": global_classification_counts,
             "top_terms_globally": global_top_terms,
         },
         "per_csv": per_csv,

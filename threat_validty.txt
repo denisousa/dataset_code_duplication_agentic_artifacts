@@ -14,3 +14,9 @@
 
 -- isso aqui também representa um falso positivos
 
+
+-- As vezes é possível obter arquivos
+
+o dataset as vezes não tem o conteúdo de algum commit ou arquivo.
+Então a gente buscando a API do github para capturar um commit antigo...
+

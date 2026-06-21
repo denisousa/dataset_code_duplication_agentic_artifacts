@@ -16,7 +16,9 @@ MD_REPORT_PATH = ROOT_DIR / "1_configurations_artifacts_results" / "clone_terms_
 COMMITS_ANALYSIS_PATH = ROOT_DIR / "2_commits_results" / "commits_clone_terms_analysis.json"
 COMMITS_REPORT_PATH = ROOT_DIR / "2_commits_results" / "commits_clone_terms_report.json"
 PRS_RESULTS_PATH = ROOT_DIR / "3_prs_results" / "search_prs_results.json"
-TARGET_AGENTS = ["Claude", "Gemini", "Cursor", "Copilot", "Codex", "Others"]
+PRS_CHECKPOINT_PATH = ROOT_DIR / "3_prs_results" / "search_prs_checkpoint.json"
+TARGET_AGENTS = ["Claude", "Gemini", "Cursor", "Copilot", "Codex", "CodeRabbit", "Others"]
+COMMIT_AGENT_BUCKETS = [*TARGET_AGENTS, "more than one"]
 
 
 def load_json(path: Path) -> Any:
@@ -92,6 +94,42 @@ def count_terms_in_prs(prs_data: dict[str, list[dict[str, Any]]]) -> tuple[Count
     return counts, display_variants
 
 
+def count_terms_in_pr_comments(prs_data: dict[str, list[dict[str, Any]]]) -> tuple[Counter[str], dict[str, Counter[str]]]:
+    counts: Counter[str] = Counter()
+    display_variants: dict[str, Counter[str]] = {}
+
+    for repo_name, repo_prs in prs_data.items():
+        for pr_entry in repo_prs:
+            seen_comment_term_keys: set[tuple[str, int, str | None, str | None, str | None, str]] = set()
+
+            for match in pr_entry.get("matches", []):
+                location = match.get("location")
+                author = match.get("author")
+                author_type = match.get("author_type")
+                term = match.get("term")
+
+                if location in {"PR title", "PR body"} or not term:
+                    continue
+
+                normalized_term = normalize_term(term)
+                comment_term_key = (
+                    repo_name,
+                    int(pr_entry.get("number") or 0),
+                    location,
+                    author,
+                    author_type,
+                    normalized_term,
+                )
+                if comment_term_key in seen_comment_term_keys:
+                    continue
+
+                seen_comment_term_keys.add(comment_term_key)
+                counts[normalized_term] += 1
+                display_variants.setdefault(normalized_term, Counter())[term] += 1
+
+    return counts, display_variants
+
+
 def build_top_terms_rows(
     md_term_counts: Counter[str],
     commit_term_counts: Counter[str],
@@ -112,14 +150,115 @@ def build_top_terms_rows(
         rows.append(
             {
                 "term": choose_display_term(display_variants[term]),
-                "md_files": md_count,
+                "configuration_artifacts": md_count,
                 "commits": commit_count,
                 "prs": pr_count,
                 "total": total,
             }
         )
 
-    rows.sort(key=lambda row: (-row["total"], -row["md_files"], row["term"]))
+    rows.sort(key=lambda row: (-row["total"], -row["configuration_artifacts"], row["term"]))
+    return rows
+
+
+def build_commit_distribution_rows(commits_analysis: dict[str, Any]) -> list[dict[str, int | str]]:
+    rows: list[dict[str, int | str]] = []
+    total_commits_in_csv = int(commits_analysis.get("summary", {}).get("total_commits_in_csv") or 0)
+    total_commits_with_match = int(commits_analysis.get("summary", {}).get("commits_with_match") or 0)
+
+    rows.append(
+        {
+            "term": "total_commits",
+            "commits": total_commits_in_csv,
+        }
+    )
+    rows.append(
+        {
+            "term": "total_matched_commits",
+            "commits": total_commits_with_match,
+        }
+    )
+
+    for entry in commits_analysis.get("summary", {}).get("top_terms", []):
+        rows.append(
+            {
+                "term": str(entry.get("term", "")),
+                "commits": int(entry.get("commits") or 0),
+            }
+        )
+
+    return rows
+
+
+def build_commit_agent_rows(commits_report: dict[str, Any]) -> list[dict[str, int | str]]:
+    counts_by_agent: Counter[str] = Counter()
+
+    for match in commits_report.get("matches", []):
+        ai_tool_value = str(match.get("ai_tool") or "")
+        mapped_agents = {
+            classify_target_agent(tool_name.strip())
+            for tool_name in ai_tool_value.split(",")
+            if tool_name.strip()
+        }
+
+        mapped_agents.discard(None)
+        if len(mapped_agents) > 1:
+            counts_by_agent["more than one"] += 1
+        elif mapped_agents:
+            counts_by_agent[next(iter(mapped_agents))] += 1
+
+    rows = [
+        {
+            "agent": agent_name,
+            "commit_count": counts_by_agent.get(agent_name, 0),
+        }
+        for agent_name in COMMIT_AGENT_BUCKETS
+    ]
+    rows.sort(
+        key=lambda row: (
+            str(row["agent"]) == "Others",
+            str(row["agent"]) == "more than one",
+            -int(row["commit_count"]),
+            str(row["agent"]),
+        )
+    )
+    rows.append(
+        {
+            "agent": "total",
+            "commit_count": sum(int(row["commit_count"]) for row in rows),
+        }
+    )
+    return rows
+
+
+def build_cross_source_term_rows(
+    md_term_counts: Counter[str],
+    commit_term_counts: Counter[str],
+    pr_comment_term_counts: Counter[str],
+    display_variants: dict[str, Counter[str]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    all_terms = sorted(
+        set(md_term_counts) | set(commit_term_counts) | set(pr_comment_term_counts)
+    )
+
+    for term in all_terms:
+        md_count = md_term_counts.get(term, 0)
+        commit_count = commit_term_counts.get(term, 0)
+        pr_comment_count = pr_comment_term_counts.get(term, 0)
+        total = md_count + commit_count + pr_comment_count
+
+        rows.append(
+            {
+                "term": choose_display_term(display_variants[term]),
+                "configuration_artifacts": md_count,
+                "commits": commit_count,
+                "pr_comments": pr_comment_count,
+                "total": total,
+            }
+        )
+
+    rows.sort(key=lambda row: (-row["total"], -row["commits"], row["term"]))
     return rows
 
 
@@ -145,7 +284,7 @@ def build_classification_rows(
 
     rows = [
         {
-            "source": "md_files",
+            "source": "configuration_artifacts",
             "dedicated": md_counts.get("dedicated", 0),
             "mention_including_partial": md_counts.get("mention", 0)
             + md_counts.get("partial", 0),
@@ -192,6 +331,164 @@ def build_md_breakdown_row(md_analysis: dict[str, Any]) -> dict[str, int]:
         "mention": mention,
         "total": dedicated + partial + mention,
     }
+
+
+def build_md_source_match_rows(md_analysis: dict[str, Any]) -> list[dict[str, int | str]]:
+    rows: list[dict[str, int | str]] = []
+
+    for entry in md_analysis.get("per_csv", []):
+        csv_name = str(entry.get("csv", ""))
+        source_name = csv_name.removesuffix(".csv") if csv_name else "unknown"
+        rows.append(
+            {
+                "source_type": source_name,
+                "matched_files": int(entry.get("md_files_with_match") or 0),
+                "total_files": int(entry.get("total_md_files") or 0),
+            }
+        )
+
+    rows.sort(key=lambda row: (-int(row["matched_files"]), str(row["source_type"])))
+    rows.append(
+        {
+            "source_type": "total",
+            "matched_files": int(md_analysis["global_summary"].get("total_md_files_with_match") or 0),
+            "total_files": int(md_analysis["global_summary"].get("total_md_files_across_all_csvs") or 0),
+        }
+    )
+    return rows
+
+
+def build_dataset_totals_rows(
+    md_analysis: dict[str, Any],
+    md_report: dict[str, Any],
+    commits_analysis: dict[str, Any],
+    commits_report: dict[str, Any],
+    prs_results: dict[str, list[dict[str, Any]]],
+    prs_checkpoint: dict[str, Any],
+) -> list[dict[str, int | str]]:
+    total_prs = 0
+    matched_prs = 0
+    md_repos: set[str] = set()
+    commit_repos: set[str] = set()
+
+    for repo_state in prs_checkpoint.get("repos", {}).values():
+        processed_prs = repo_state.get("processed_prs") or {}
+        total_prs += len(processed_prs)
+        matched_prs += sum(1 for value in processed_prs.values() if value is not None)
+
+    for source in md_report.get("sources", []):
+        for match in source.get("matches", []):
+            repo_name = str(match.get("repo_name") or "").strip()
+            if repo_name:
+                md_repos.add(repo_name)
+
+    for match in commits_report.get("matches", []):
+        repo_name = str(match.get("repo_name") or "").strip()
+        if repo_name:
+            commit_repos.add(repo_name)
+
+    pr_repos = set(prs_results.keys())
+
+    rows = [
+        {
+            "source": "configuration_artifacts",
+            "total_items": int(md_analysis.get("global_summary", {}).get("total_md_files_across_all_csvs") or 0),
+            "matched_items": int(md_analysis.get("global_summary", {}).get("total_md_files_with_match") or 0),
+            "unique_repositories": len(md_repos),
+        },
+        {
+            "source": "commits",
+            "total_items": int(commits_analysis.get("summary", {}).get("total_commits_in_csv") or 0),
+            "matched_items": int(commits_analysis.get("summary", {}).get("commits_with_match") or 0),
+            "unique_repositories": len(commit_repos),
+        },
+        {
+            "source": "prs",
+            "total_items": total_prs,
+            "matched_items": matched_prs,
+            "unique_repositories": len(pr_repos),
+        },
+    ]
+    rows.append(
+        {
+            "source": "total",
+            "total_items": sum(int(row["total_items"]) for row in rows),
+            "matched_items": sum(int(row["matched_items"]) for row in rows),
+            "unique_repositories": len(md_repos | commit_repos | pr_repos),
+        }
+    )
+    return rows
+
+
+def build_collection_summary_rows(
+    md_report: dict[str, Any],
+    commits_report: dict[str, Any],
+    prs_results: dict[str, list[dict[str, Any]]],
+    prs_checkpoint: dict[str, Any],
+) -> list[dict[str, int | str]]:
+    md_repos: set[str] = set()
+    commit_repos: set[str] = set()
+
+    matched_configuration_artifacts = 0
+    for source in md_report.get("sources", []):
+        matched_configuration_artifacts += len(source.get("matches", []))
+        for match in source.get("matches", []):
+            repo_name = str(match.get("repo_name") or "").strip()
+            if repo_name:
+                md_repos.add(repo_name)
+
+    matched_commits = len(commits_report.get("matches", []))
+    for match in commits_report.get("matches", []):
+        repo_name = str(match.get("repo_name") or "").strip()
+        if repo_name:
+            commit_repos.add(repo_name)
+
+    pr_repos = set(prs_results.keys())
+    matched_prs = sum(len(repo_prs) for repo_prs in prs_results.values())
+    matched_pr_comments = sum(
+        int(pr_entry.get("matched_comments_count") or 0)
+        for repo_prs in prs_results.values()
+        for pr_entry in repo_prs
+    )
+
+    return [
+        {
+            "metric": "unique_repositories_with_configuration_artifacts_duplication",
+            "value": len(md_repos),
+        },
+        {
+            "metric": "unique_repositories_with_agent_commits",
+            "value": len(commit_repos),
+        },
+        {
+            "metric": "unique_repositories_with_prs",
+            "value": len(pr_repos),
+        },
+        {
+            "metric": "unique_repositories_total",
+            "value": len(md_repos | commit_repos | pr_repos),
+        },
+        {
+            "metric": "matched_configuration_artifacts",
+            "value": matched_configuration_artifacts,
+        },
+        {
+            "metric": "matched_commits",
+            "value": matched_commits,
+        },
+        {
+            "metric": "matched_prs",
+            "value": matched_prs,
+        },
+        {
+            "metric": "matched_pr_comments",
+            "value": matched_pr_comments,
+        },
+        {
+            "metric": "total_matched_artifacts",
+            "value": matched_configuration_artifacts + matched_commits + matched_prs,
+        },
+    ]
 
 
 def count_pr_comments_by_author_type(pr_entry: dict[str, Any]) -> tuple[int, int, int]:
@@ -296,52 +593,159 @@ def build_pr_creator_comment_rows(prs_data: dict[str, list[dict[str, Any]]]) -> 
     return rows
 
 
-def build_pr_agent_comment_rows(prs_data: dict[str, list[dict[str, Any]]]) -> list[dict[str, int | str]]:
+def build_comment_agent_count_rows(prs_data: dict[str, list[dict[str, Any]]]) -> list[dict[str, int | str]]:
     rows_by_agent: dict[str, dict[str, int | str]] = {
         agent_name: {
             "agent": agent_name,
-            "matched_comment_slots": 0,
-            "prs_with_comments": 0,
+            "comment_count": 0,
         }
         for agent_name in TARGET_AGENTS
     }
 
-    for repo_name, repo_prs in prs_data.items():
+    for repo_prs in prs_data.values():
         for pr_entry in repo_prs:
-            seen_keys_for_pr: set[tuple[str, int, str | None, str | None, str]] = set()
-            seen_agents_for_pr: set[str] = set()
+            commenter_types = pr_entry.get("commenter_types")
+            matched_comments_count = int(pr_entry.get("matched_comments_count") or 0)
 
-            for match in pr_entry.get("matches", []):
-                location = match.get("location")
-                author = match.get("author")
-                author_type = match.get("author_type")
+            if matched_comments_count == 0:
+                continue
 
-                if location in {"PR title", "PR body"} or not author or author_type != "bot":
-                    continue
+            bot_matches = [
+                match
+                for match in pr_entry.get("matches", [])
+                if match.get("location") not in {"PR title", "PR body"}
+                and match.get("author")
+                and match.get("author_type") == "bot"
+            ]
 
-                agent_name = classify_target_agent(author)
+            if not bot_matches:
+                continue
+
+            if commenter_types == "bot":
+                agent_to_keys: dict[str, set[tuple[str | None, str | None]]] = {}
+                for match in bot_matches:
+                    agent_name = classify_target_agent(match.get("author"))
+                    if not agent_name:
+                        continue
+
+                    comment_key = (match.get("location"), match.get("author"))
+                    agent_to_keys.setdefault(agent_name, set()).add(comment_key)
+
+                if len(agent_to_keys) == 1:
+                    agent_name = next(iter(agent_to_keys))
+                    rows_by_agent[agent_name]["comment_count"] += matched_comments_count
+                else:
+                    for agent_name, comment_keys in agent_to_keys.items():
+                        rows_by_agent[agent_name]["comment_count"] += len(comment_keys)
+                continue
+
+            seen_comment_keys: set[tuple[str | None, str | None, str | None]] = set()
+            for match in bot_matches:
+                agent_name = classify_target_agent(match.get("author"))
                 if not agent_name:
                     continue
 
                 comment_key = (
-                    repo_name,
-                    int(pr_entry.get("number") or 0),
-                    location,
-                    author,
-                    agent_name,
+                    match.get("location"),
+                    match.get("author"),
+                    match.get("author_type"),
                 )
-                if comment_key in seen_keys_for_pr:
+                if comment_key in seen_comment_keys:
                     continue
 
-                seen_keys_for_pr.add(comment_key)
-                rows_by_agent[agent_name]["matched_comment_slots"] += 1
-                seen_agents_for_pr.add(agent_name)
-
-            for agent_name in seen_agents_for_pr:
-                rows_by_agent[agent_name]["prs_with_comments"] += 1
+                seen_comment_keys.add(comment_key)
+                rows_by_agent[agent_name]["comment_count"] += 1
 
     rows = list(rows_by_agent.values())
-    rows.sort(key=lambda row: (-int(row["matched_comment_slots"]), -int(row["prs_with_comments"]), str(row["agent"])))
+    rows.sort(
+        key=lambda row: (
+            str(row["agent"]) == "Others",
+            -int(row["comment_count"]),
+            str(row["agent"]),
+        )
+    )
+    rows.append(
+        {
+            "agent": "total",
+            "comment_count": sum(int(row["comment_count"]) for row in rows),
+        }
+    )
+    return rows
+
+
+def build_agent_artifact_rows(
+    md_report: dict[str, Any],
+    commits_analysis: dict[str, Any],
+    comment_agent_count_rows: list[dict[str, int | str]],
+) -> list[dict[str, int | str]]:
+    rows_by_agent: dict[str, dict[str, int | str]] = {
+        agent_name: {
+            "agent": agent_name,
+            "configuration_artifacts": 0,
+            "commits": 0,
+            "pr_comments": 0,
+            "total": 0,
+        }
+        for agent_name in COMMIT_AGENT_BUCKETS
+    }
+
+    for source in md_report.get("sources", []):
+        for match in source.get("matches", []):
+            agent_name = classify_target_agent(
+                f'{match.get("file_path", "")} {match.get("file_name", "")}'
+            )
+            if not agent_name:
+                continue
+            rows_by_agent[agent_name]["configuration_artifacts"] += 1
+
+    for entry in commits_analysis.get("summary", {}).get("matches_by_ai_tool", []):
+        commit_count = int(entry.get("commits") or 0)
+        ai_tool_value = str(entry.get("ai_tool") or "")
+        mapped_agents = {
+            classify_target_agent(tool_name.strip())
+            for tool_name in ai_tool_value.split(",")
+            if tool_name.strip()
+        }
+
+        mapped_agents.discard(None)
+        if len(mapped_agents) > 1:
+            rows_by_agent["more than one"]["commits"] += commit_count
+        elif mapped_agents:
+            rows_by_agent[next(iter(mapped_agents))]["commits"] += commit_count
+
+    for row in comment_agent_count_rows:
+        agent_name = str(row.get("agent") or "")
+        if agent_name == "total" or agent_name not in rows_by_agent:
+            continue
+        rows_by_agent[agent_name]["pr_comments"] = int(row.get("comment_count") or 0)
+
+    rows = [
+        row for row in rows_by_agent.values()
+        if str(row["agent"]) != "more than one"
+    ]
+    for row in rows:
+        row["total"] = (
+            int(row["configuration_artifacts"])
+            + int(row["commits"])
+            + int(row["pr_comments"])
+        )
+
+    rows.sort(
+        key=lambda row: (
+            str(row["agent"]) == "Others",
+            -int(row["total"]),
+            str(row["agent"]),
+        )
+    )
+    rows.append(
+        {
+            "agent": "total",
+            "configuration_artifacts": sum(int(row["configuration_artifacts"]) for row in rows),
+            "commits": sum(int(row["commits"]) for row in rows),
+            "pr_comments": sum(int(row["pr_comments"]) for row in rows),
+            "total": sum(int(row["total"]) for row in rows),
+        }
+    )
     return rows
 
 
@@ -385,19 +789,120 @@ def validate_md_total(md_analysis: dict[str, Any], md_breakdown: dict[str, int])
 
 
 def build_text_report(
+    md_source_match_rows: list[dict[str, int | str]],
+    commit_distribution_rows: list[dict[str, int | str]],
+    commit_agent_rows: list[dict[str, int | str]],
+    collection_summary_rows: list[dict[str, int | str]],
+    cross_source_term_rows: list[dict[str, Any]],
     top_terms_rows: list[dict[str, Any]],
     classification_rows: list[dict[str, Any]],
     md_breakdown_row: dict[str, int],
     pr_creator_comment_rows: list[dict[str, int | str]],
-    pr_agent_comment_rows: list[dict[str, int | str]],
+    comment_agent_count_rows: list[dict[str, int | str]],
+    agent_artifact_rows: list[dict[str, int | str]],
+    dataset_totals_rows: list[dict[str, int | str]],
 ) -> str:
     sections = [
-        "TOP CLONE TERMS ACROSS MD FILES, COMMITS, AND PRS",
+        "MATCHED CONFIGURATION FILES",
+        format_table(
+            md_source_match_rows,
+            [
+                ("source_type", "source_type"),
+                ("matched_files", "matched_files"),
+                ("total_files", "total_files"),
+            ],
+        ),
+        "",
+        "COMMITS DISTRIBUTION",
+        format_table(
+            commit_distribution_rows,
+            [
+                ("term", "term"),
+                ("commits", "commits"),
+            ],
+        ),
+        "",
+        "COMMITS AUTHORED BY AGENTS",
+        format_table(
+            commit_agent_rows,
+            [
+                ("agent", "agent"),
+                ("commit_count", "commit_count"),
+            ],
+        ),
+        "",
+        "COLLECTION SUMMARY",
+        format_table(
+            collection_summary_rows,
+            [
+                ("metric", "metric"),
+                ("value", "value"),
+            ],
+        ),
+        "",
+        "CONFIGURATION ARTIFACTS, COMMITS, AND PR COMMENTS",
+        format_table(
+            cross_source_term_rows,
+            [
+                ("term", "term"),
+                ("configuration_artifacts", "configuration_artifacts"),
+                ("commits", "commits"),
+                ("pr_comments", "pr_comments"),
+                ("total", "total"),
+            ],
+        ),
+        "",
+        "PR CREATOR VS COMMENT AUTHOR COUNTS",
+        format_table(
+            pr_creator_comment_rows,
+            [
+                ("pr_creator_type", "pr_creator_type"),
+                ("pr_count", "pr_count_creator"),
+                ("human_comments", "human_comments"),
+                ("agent_comments", "agent_comments"),
+                ("unresolved_comments", "unresolved_comments"),
+                ("total_comments", "total_comments"),
+            ],
+        ),
+        "",
+        "COMMENT AGENTS COUNTS",
+        format_table(
+            comment_agent_count_rows,
+            [
+                ("agent", "agent"),
+                ("comment_count", "comment_count"),
+            ],
+        ),
+        "",
+        "AGENT ARTIFACT COUNTS",
+        format_table(
+            agent_artifact_rows,
+            [
+                ("agent", "agent"),
+                ("configuration_artifacts", "configuration_artifacts"),
+                ("commits", "commits"),
+                ("pr_comments", "pr_comments"),
+                ("total", "total"),
+            ],
+        ),
+        "",
+        "DATASET TOTALS",
+        format_table(
+            dataset_totals_rows,
+            [
+                ("source", "source"),
+                ("total_items", "total_items"),
+                ("matched_items", "matched_items"),
+                ("unique_repositories", "unique_repositories"),
+            ],
+        ),
+        "",
+        "TOP CLONE TERMS ACROSS CONFIGURATION ARTIFACTS, COMMITS, AND PRS",
         format_table(
             top_terms_rows,
             [
                 ("term", "term"),
-                ("md_files", "md_files"),
+                ("configuration_artifacts", "configuration_artifacts"),
                 ("commits", "commits"),
                 ("prs", "prs"),
                 ("total", "total"),
@@ -415,7 +920,7 @@ def build_text_report(
             ],
         ),
         "",
-        "MD FILES BREAKDOWN",
+        "CONFIGURATION ARTIFACTS BREAKDOWN",
         format_table(
             [md_breakdown_row],
             [
@@ -423,29 +928,6 @@ def build_text_report(
                 ("partial", "partial"),
                 ("mention", "mention"),
                 ("total", "total"),
-            ],
-        ),
-        "",
-        "PR CREATOR VS COMMENT AUTHOR COUNTS",
-        format_table(
-            pr_creator_comment_rows,
-            [
-                ("pr_creator_type", "pr_creator_type"),
-                ("pr_count", "pr_count"),
-                ("human_comments", "human_comments"),
-                ("agent_comments", "agent_comments"),
-                ("unresolved_comments", "unresolved_comments"),
-                ("total_comments", "total_comments"),
-            ],
-        ),
-        "",
-        "PR COMMENT AGENTS",
-        format_table(
-            pr_agent_comment_rows,
-            [
-                ("agent", "agent"),
-                ("matched_comment_slots", "matched_comment_slots"),
-                ("prs_with_comments", "prs_with_comments"),
             ],
         ),
     ]
@@ -647,27 +1129,48 @@ def build_wordcloud_svg(top_terms_rows: list[dict[str, Any]]) -> str:
 
 
 def write_outputs(
+    md_source_match_rows: list[dict[str, int | str]],
+    commit_distribution_rows: list[dict[str, int | str]],
+    commit_agent_rows: list[dict[str, int | str]],
+    collection_summary_rows: list[dict[str, int | str]],
+    cross_source_term_rows: list[dict[str, Any]],
     top_terms_rows: list[dict[str, Any]],
     classification_rows: list[dict[str, Any]],
     md_breakdown_row: dict[str, int],
     pr_creator_comment_rows: list[dict[str, int | str]],
-    pr_agent_comment_rows: list[dict[str, int | str]],
+    comment_agent_count_rows: list[dict[str, int | str]],
+    agent_artifact_rows: list[dict[str, int | str]],
+    dataset_totals_rows: list[dict[str, int | str]],
 ) -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     summary_payload = {
+        "matched_configuration_files": md_source_match_rows,
+        "commit_term_distribution": commit_distribution_rows,
+        "commit_agent_counts": commit_agent_rows,
+        "collection_summary": collection_summary_rows,
+        "configuration_artifacts_commits_pr_comments": cross_source_term_rows,
         "top_clone_terms": top_terms_rows,
         "dedicated_vs_mention_like": classification_rows,
-        "md_files_breakdown": md_breakdown_row,
+        "configuration_artifacts_breakdown": md_breakdown_row,
         "pr_creator_comment_author_counts": pr_creator_comment_rows,
-        "pr_comment_agents": pr_agent_comment_rows,
+        "comment_agents_counts": comment_agent_count_rows,
+        "agent_artifact_counts": agent_artifact_rows,
+        "dataset_totals": dataset_totals_rows,
     }
     text_report = build_text_report(
+        md_source_match_rows,
+        commit_distribution_rows,
+        commit_agent_rows,
+        collection_summary_rows,
+        cross_source_term_rows,
         top_terms_rows,
         classification_rows,
         md_breakdown_row,
         pr_creator_comment_rows,
-        pr_agent_comment_rows,
+        comment_agent_count_rows,
+        agent_artifact_rows,
+        dataset_totals_rows,
     )
     wordcloud_svg = build_wordcloud_svg(top_terms_rows)
 
@@ -685,10 +1188,12 @@ def main() -> None:
     commits_analysis = load_json(COMMITS_ANALYSIS_PATH)
     commits_report = load_json(COMMITS_REPORT_PATH)
     prs_results = load_json(PRS_RESULTS_PATH)
+    prs_checkpoint = load_json(PRS_CHECKPOINT_PATH)
 
     md_term_counts, md_display_variants = count_terms_in_md(md_report)
     commit_term_counts, commit_display_variants = count_terms_in_commits(commits_report)
     pr_term_counts, pr_display_variants = count_terms_in_prs(prs_results)
+    pr_comment_term_counts, pr_comment_display_variants = count_terms_in_pr_comments(prs_results)
     display_variants = md_display_variants
 
     for normalized_term, variants in commit_display_variants.items():
@@ -697,11 +1202,29 @@ def main() -> None:
     for normalized_term, variants in pr_display_variants.items():
         display_variants.setdefault(normalized_term, Counter()).update(variants)
 
+    for normalized_term, variants in pr_comment_display_variants.items():
+        display_variants.setdefault(normalized_term, Counter()).update(variants)
+
     top_terms_rows = build_top_terms_rows(
         md_term_counts,
         commit_term_counts,
         pr_term_counts,
         display_variants,
+    )
+    cross_source_term_rows = build_cross_source_term_rows(
+        md_term_counts,
+        commit_term_counts,
+        pr_comment_term_counts,
+        display_variants,
+    )
+    md_source_match_rows = build_md_source_match_rows(md_analysis)
+    commit_distribution_rows = build_commit_distribution_rows(commits_analysis)
+    commit_agent_rows = build_commit_agent_rows(commits_report)
+    collection_summary_rows = build_collection_summary_rows(
+        md_report,
+        commits_report,
+        prs_results,
+        prs_checkpoint,
     )
     classification_rows = build_classification_rows(
         md_analysis,
@@ -710,15 +1233,35 @@ def main() -> None:
     )
     md_breakdown_row = build_md_breakdown_row(md_analysis)
     pr_creator_comment_rows = build_pr_creator_comment_rows(prs_results)
-    pr_agent_comment_rows = build_pr_agent_comment_rows(prs_results)
+    comment_agent_count_rows = build_comment_agent_count_rows(prs_results)
+    agent_artifact_rows = build_agent_artifact_rows(
+        md_report,
+        commits_analysis,
+        comment_agent_count_rows,
+    )
+    dataset_totals_rows = build_dataset_totals_rows(
+        md_analysis,
+        md_report,
+        commits_analysis,
+        commits_report,
+        prs_results,
+        prs_checkpoint,
+    )
 
     validate_md_total(md_analysis, md_breakdown_row)
     write_outputs(
+        md_source_match_rows,
+        commit_distribution_rows,
+        commit_agent_rows,
+        collection_summary_rows,
+        cross_source_term_rows,
         top_terms_rows,
         classification_rows,
         md_breakdown_row,
         pr_creator_comment_rows,
-        pr_agent_comment_rows,
+        comment_agent_count_rows,
+        agent_artifact_rows,
+        dataset_totals_rows,
     )
 
 
