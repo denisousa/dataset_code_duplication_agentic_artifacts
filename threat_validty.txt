@@ -20,3 +20,8 @@
 o dataset as vezes não tem o conteúdo de algum commit ou arquivo.
 Então a gente buscando a API do github para capturar um commit antigo...
 
+Achei um caso onde só era um README e o agente considerou o commit como um artefato real de duplicação de código
+
+No commits.csv eu achei um caso onde o conteúdo do commit está levemente diferente do link do github lá
+
+estou usando a API do GitHub que captura até 1000 PRs mergeadas por projeto

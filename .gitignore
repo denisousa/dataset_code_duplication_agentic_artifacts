@@ -19,6 +19,9 @@ repos_data (2)/
 4_*/
 5_*/
 6_*/
+7_*/
+8_*/
+9_*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -27,6 +30,8 @@ __pycache__/
 
 # C extensions
 *.so
+
+
 
 # Distribution / packaging
 .Python

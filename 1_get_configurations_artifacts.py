@@ -58,19 +58,18 @@ ANALYSIS_PATH = RESULTS_DIR / "clone_terms_analysis.json"
 FAILED_PATH   = RESULTS_DIR / "clone_terms_failed.json"
 
 CLONE_TERMS: list[str] = [
-    "duplicate code",
-    "duplicated code",
-    "code duplication",
-    "repeated code",
-    "DRY principle",
-    "avoid duplication",
-    "reused code",
-    "code reuse",
-    "code sharing",
-    "don't repeat yourself",
-    "redundant code",
-    "duplicate functionality",
-    "duplicated functionality",
+    "duplicate code"
+    "duplicated code"
+    "code duplication"
+    "repeated code"
+    "DRY principle"
+    "reused code"
+    "code reuse"
+    "code sharing"
+    "don't repeat yourself"
+    "redundant code"
+    "duplicate functionality"
+    "duplicated functionality"
 ]
 
 # Adicionar resue and code reused

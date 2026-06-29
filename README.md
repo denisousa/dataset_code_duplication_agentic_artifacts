@@ -78,6 +78,19 @@ Generates:
 - `3_prs_results/search_prs_results.json`
 - `3_prs_results/search_prs_checkpoint.json`
 
+### `7_get_true_configuration_artifact_prs.py`
+
+Generates:
+
+- `7_true_configuration_artifact_prs_results/merged_prs_after_true_configuration_artifacts.json`
+- `7_true_configuration_artifact_prs_results/merged_prs_after_true_configuration_artifacts_checkpoint.json`
+
+### `9_get_true_configuration_artifact_agent_commits.py`
+
+Generates:
+
+- `9_true_configuration_artifact_agent_commits_results/agent_commits_after_true_configuration_artifacts.json`
+
 ### `4_analyze.py`
 
 Generates:
